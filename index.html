@@ -66,60 +66,111 @@
 <script type="module">
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const SUPABASE_URL = "https://dmudbmvvsiofbupptnis.supabase.co";   // ←置換
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtdWRibXZ2c2lvZmJ1cHB0bmlzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTgxMTcyMzEsImV4cCI6MjA3MzY5MzIzMX0.ima2MhGyQ2i_X38u_BrxehHRweKVoFr5rTza3yzTUbo";                      // ←置換
-const VAPID_PUBLIC_KEY = "BNHJJ8g4cJ4f9tCx56TT3h7BAl4lvgEIrAgsCrvZtQGgReHgHEkmPkwfgXH83Pj3YkHht-GmF08nc5vv0TjDSqI";               // ←置換（関数と同じPublic）
+const SUPABASE_URL = "https://dmudbmvvsiofbupptnis.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtdWRibXZ2c2lvZmJ1cHB0bmlzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTgxMTcyMzEsImV4cCI6MjA3MzY5MzIzMX0.ima2MhGyQ2i_X38u_BrxehHRweKVoFr5rTza3yzTUbo";
+const VAPID_PUBLIC_KEY = "BNHJJ8g4cJ4f9tCx56TT3h7BAl4lvgEIrAgsCrvZtQGgReHgHEkmPkwfgXH83Pj3YkHht-GmF08nc5vv0TjDSqI";
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-const $ = (s)=>document.querySelector(s);
-const status = (t)=>$("#status").textContent=t;
-
-// --- 認証UI
-$("#sendLink").onclick = async () => {
-  const email = $("#email").value.trim();
-  if(!email) return alert("メールを入力してください");
-  const { error } = await supabase.auth.signInWithOtp({
-    email, options: { emailRedirectTo: location.origin }
-  });
-  if (error) return alert(error.message);
-  status("送信しました。メールのリンクを開いて戻ってきてください。");
-};
-
-$("#logout").onclick = async () => { await supabase.auth.signOut(); location.reload(); };
-
-// 認証状態が変わったらUI切替＆購読＆データ読込
-supabase.auth.onAuthStateChange(async (_event, session) => {
-  const user = session?.user || (await supabase.auth.getUser()).data.user;
-  if (user) {
-    $("#authArea").style.display="none";
-    $("#userArea").style.display="flex";
-    $("#userEmail").textContent = user.email || "ログイン中";
-    status("ログイン済み。データ読み込み中…");
-    await ensureDefaultTracker();
-    await ensurePushSubscription();
-    await loadMonth(currentY, currentM);
-    await loadMyStreak();
-    status("準備OK");
-  } else {
-    $("#authArea").style.display="flex";
-    $("#userArea").style.display="none";
-    status("ログインしてください");
+// supabase-js のセッションを確実に復元 & 自動更新
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true
   }
 });
 
-// --- カレンダー描画＆○×保存
+const $ = (s)=>document.querySelector(s);
+const status = (t)=>$("#status").textContent=t;
+
+// ============ 認証：初期化 / 監視 / 画面切替 ============
+async function initAuth() {
+  // マジックリンクで戻ってきた直後の URL 片付け（見た目を綺麗に）
+  try {
+    if (location.search || location.hash) {
+      const url = new URL(location.href);
+      // supabase が処理した後なら不要なパラメータを消す
+      if (url.searchParams.has('code') || url.hash.includes('access_token')) {
+        history.replaceState(null, '', location.origin + location.pathname);
+      }
+    }
+  } catch {}
+
+  const { data: { session }, error } = await supabase.auth.getSession();
+  if (error) console.error(error);
+  if (session?.user) await onSignedIn(session); else onSignedOut();
+}
+
+supabase.auth.onAuthStateChange(async (_event, session) => {
+  if (session?.user) await onSignedIn(session); else onSignedOut();
+});
+
+async function onSignedIn(session){
+  $("#authArea").style.display="none";
+  $("#userArea").style.display="flex";
+  $("#userEmail").textContent = session.user.email || "ログイン中";
+  status("ログイン済み。データ読み込み中…");
+  await ensureDefaultTracker();
+  await ensurePushSubscription();
+  await loadMonth(currentY, currentM);
+  await loadMyStreak();
+  status("準備OK");
+}
+
+function onSignedOut(){
+  $("#authArea").style.display="flex";
+  $("#userArea").style.display="none";
+  status("ログインしてください");
+}
+
+// ============ マジックリンク送信（60秒クールダウン） ============
+async function sendMagicLink(email) {
+  const btn = $("#sendLink");
+  btn.disabled = true;
+  let left = 60;
+  btn.textContent = `再送 (${left}s)`;
+  const timer = setInterval(() => {
+    left -= 1;
+    btn.textContent = left > 0 ? `再送 (${left}s)` : 'ログインリンク送信';
+    if (left <= 0) { clearInterval(timer); btn.disabled = false; }
+  }, 1000);
+
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: location.origin }
+  });
+  if (error) {
+    console.error(error);
+    status(error.message === 'Email rate limit exceeded'
+      ? '送信が多すぎます。1〜5分待って再試行してください。'
+      : `送信エラー: ${error.message}`);
+  } else {
+    status('ログインリンクを送信しました。メールのリンクを開いて戻ってください。');
+  }
+}
+
+// ボタン/ログアウト
+$("#sendLink").onclick = async () => {
+  const email = $("#email").value.trim();
+  if (!email) return alert("メールを入力してください");
+  await sendMagicLink(email);
+};
+$("#logout").onclick = async () => {
+  await supabase.auth.signOut();
+  onSignedOut();
+};
+
+// ============ カレンダー描画＆○×保存 ============
 let current = new Date(); current.setDate(1);
-let currentY = current.getFullYear(), currentM = current.getMonth()+1; // 1-12
+let currentY = current.getFullYear(), currentM = current.getMonth()+1;
 
 $("#prev").onclick = ()=>{ const d=new Date(currentY,currentM-2,1); currentY=d.getFullYear(); currentM=d.getMonth()+1; loadMonth(currentY,currentM); };
-$("#next").onclick = ()=>{ const d=new Date(currentY,currentM,1); currentY=d.getFullYear(); currentM=d.getMonth()+1; loadMonth(currentY,currentM); };
+$("#next").onclick = ()=>{ const d=new Date(currentY,currentM,1);   currentY=d.getFullYear(); currentM=d.getMonth()+1; loadMonth(currentY,currentM); };
 
 async function loadMonth(y,m){
   $("#ym").textContent = `${y}年 ${m}月`;
-  const user = (await supabase.auth.getUser()).data.user; if(!user) return;
+  const { data:{ user } } = await supabase.auth.getUser(); if(!user) return;
   const trackerId = await getDefaultTrackerId(user.id);
 
-  // その月の全マークを取得
   const { data, error } = await supabase
     .from("marks")
     .select("d, mark")
@@ -127,17 +178,12 @@ async function loadMonth(y,m){
   if (error) { console.error(error); return; }
   const map = new Map(data?.map(r=>[r.d, r.mark]) || []);
 
-  // グリッド生成
   const grid = $("#grid"); grid.innerHTML = "";
   const first = new Date(y, m-1, 1);
-  const startW = (first.getDay()+6)%7; // 月曜=0に寄せたい場合は調整
+  const startW = (first.getDay()+6)%7; // 月曜起点
   const days = new Date(y, m, 0).getDate();
-  const cells = [];
 
-  // 前月の空白
   for(let i=0;i<startW;i++){ const div=document.createElement("div"); div.className="cell muted"; grid.appendChild(div); }
-
-  // 当月
   for(let d=1; d<=days; d++){
     const div = document.createElement("div"); div.className="cell";
     div.dataset.day = String(d);
@@ -145,24 +191,24 @@ async function loadMonth(y,m){
     if (mark==='○') div.classList.add("ok");
     if (mark==='×') div.classList.add("ng");
     div.onclick = ()=>toggleMark(y,m,d,trackerId,div);
-    grid.appendChild(div); cells.push(div);
+    grid.appendChild(div);
   }
 }
 
 async function toggleMark(y,m,d,trackerId,cell){
-  const user = (await supabase.auth.getUser()).data.user; if(!user) return;
+  const { data:{ user } } = await supabase.auth.getUser(); if(!user) return;
   const now = cell.textContent;
   let next = null;
   if (now === String(d)) next = '○';
   else if (now === '○') next = '×';
-  else next = null; // 空に戻す
+  else next = null;
 
   if (next){
     const { error } = await supabase.from("marks").upsert({
       user_id: user.id, y, m, d, tracker_id: trackerId, mark: next, updated_at: new Date().toISOString()
     });
     if (error) return alert(error.message);
-  }else{
+  } else {
     const { error } = await supabase.from("marks").delete()
       .eq("user_id", user.id).eq("y", y).eq("m", m).eq("d", d).eq("tracker_id", trackerId);
     if (error) return alert(error.message);
@@ -171,15 +217,15 @@ async function toggleMark(y,m,d,trackerId,cell){
   await loadMyStreak();
 }
 
-// --- 連続記録日数の表示
+// ============ 連続記録日数 ============
 async function loadMyStreak(){
   const { data, error } = await supabase.from("user_stats").select("streak_days").single();
   if (!error && data) $("#streakDays").textContent = data.streak_days;
 }
 
-// --- デフォルトトラッカー（無ければ作る）
+// ============ デフォルトトラッカー作成 ============
 async function ensureDefaultTracker(){
-  const user = (await supabase.auth.getUser()).data.user; if(!user) return;
+  const { data:{ user } } = await supabase.auth.getUser(); if(!user) return;
   const { data } = await supabase.from("trackers").select("id").eq("user_id", user.id).order("sort_index").limit(1);
   if (!data || data.length===0){
     await supabase.from("trackers").insert({ user_id: user.id, name: "メイン", color: "#7c9cff", sort_index: 0 });
@@ -191,7 +237,7 @@ async function getDefaultTrackerId(uid){
   return data?.[0]?.id;
 }
 
-// --- 通知購読（Service Worker登録→許可→購読をDB保存）
+// ============ Web Push 購読 ============
 async function ensurePushSubscription(){
   if (!("serviceWorker" in navigator)) return;
   const reg = await navigator.serviceWorker.register("/service-worker.js");
@@ -224,7 +270,7 @@ function urlBase64ToUint8Array(base64String) {
   return outputArray;
 }
 
-// --- リマインド設定（ON/OFFのみ／時刻は固定）
+// ============ リマインド設定保存 ============
 $("#savePrefs").onclick = async () => {
   const { data:{user} } = await supabase.auth.getUser(); if(!user) return alert("先にログインしてください");
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Tokyo";
@@ -236,19 +282,6 @@ $("#savePrefs").onclick = async () => {
   status(`保存しました（${enabled?'ON':'OFF'} / ${tz}）`);
 };
 
-// 初期：ログイン状態チェック
-(async()=>{
-  const { data:{ user } } = await supabase.auth.getUser();
-  if (user){
-    $("#authArea").style.display="none"; $("#userArea").style.display="flex";
-    $("#userEmail").textContent = user.email || "ログイン中";
-    await ensureDefaultTracker();
-    await ensurePushSubscription();
-    await loadMonth(currentY, currentM);
-    await loadMyStreak();
-    status("準備OK");
-  } else {
-    status("ログインしてください");
-  }
-})();
+// 起動時に認証初期化
+initAuth();
 </script>
