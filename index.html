@@ -66,9 +66,9 @@
 <script type="module">
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const SUPABASE_URL = "https://<YOUR-PROJECT-REF>.supabase.co";   // ←置換
-const SUPABASE_ANON_KEY = "<YOUR-ANON-KEY>";                      // ←置換
-const VAPID_PUBLIC_KEY = "<YOUR-VAPID-PUBLIC-KEY>";               // ←置換（関数と同じPublic）
+const SUPABASE_URL = "https://dmudbmvvsiofbupptnis.supabase.co";   // ←置換
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtdWRibXZ2c2lvZmJ1cHB0bmlzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTgxMTcyMzEsImV4cCI6MjA3MzY5MzIzMX0.ima2MhGyQ2i_X38u_BrxehHRweKVoFr5rTza3yzTUbo";                      // ←置換
+const VAPID_PUBLIC_KEY = "BNHJJ8g4cJ4f9tCx56TT3h7BAl4lvgEIrAgsCrvZtQGgReHgHEkmPkwfgXH83Pj3YkHht-GmF08nc5vv0TjDSqI";               // ←置換（関数と同じPublic）
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const $ = (s)=>document.querySelector(s);
