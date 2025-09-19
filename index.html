@@ -72,23 +72,23 @@ const VAPID_PUBLIC_KEY = "BNHJJ8g4cJ4f9tCx56TT3h7BAl4lvgEIrAgsCrvZtQGgReHgHEkmPk
 
 // supabase-js のセッションを確実に復元 & 自動更新
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-    detectSessionInUrl: true
-  }
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
 });
+
+// ✅ カレンダー状態変数は「onAuthStateChange を設定する前」に定義しておく
+let current = new Date(); current.setDate(1);
+let currentY = current.getFullYear();
+let currentM = current.getMonth() + 1;
 
 const $ = (s)=>document.querySelector(s);
 const status = (t)=>$("#status").textContent=t;
 
 // ============ 認証：初期化 / 監視 / 画面切替 ============
 async function initAuth() {
-  // マジックリンクで戻ってきた直後の URL 片付け（見た目を綺麗に）
+  // マジックリンクで戻ってきた直後の URL をきれいに
   try {
     if (location.search || location.hash) {
       const url = new URL(location.href);
-      // supabase が処理した後なら不要なパラメータを消す
       if (url.searchParams.has('code') || url.hash.includes('access_token')) {
         history.replaceState(null, '', location.origin + location.pathname);
       }
@@ -105,12 +105,20 @@ supabase.auth.onAuthStateChange(async (_event, session) => {
 });
 
 async function onSignedIn(session){
+  // 念のための保険（変数が未初期化ならここで整える）
+  if (!currentY || !currentM) {
+    const d = new Date(); d.setDate(1);
+    currentY = d.getFullYear(); currentM = d.getMonth() + 1;
+  }
   $("#authArea").style.display="none";
   $("#userArea").style.display="flex";
   $("#userEmail").textContent = session.user.email || "ログイン中";
   status("ログイン済み。データ読み込み中…");
+
+  // データ描画に関係ない処理は await しない（並行で進める）
+  ensurePushSubscription().catch(console.warn);
+
   await ensureDefaultTracker();
-  await ensurePushSubscription();
   await loadMonth(currentY, currentM);
   await loadMyStreak();
   status("準備OK");
@@ -160,16 +168,19 @@ $("#logout").onclick = async () => {
 };
 
 // ============ カレンダー描画＆○×保存 ============
-let current = new Date(); current.setDate(1);
-let currentY = current.getFullYear(), currentM = current.getMonth()+1;
-
 $("#prev").onclick = ()=>{ const d=new Date(currentY,currentM-2,1); currentY=d.getFullYear(); currentM=d.getMonth()+1; loadMonth(currentY,currentM); };
 $("#next").onclick = ()=>{ const d=new Date(currentY,currentM,1);   currentY=d.getFullYear(); currentM=d.getMonth()+1; loadMonth(currentY,currentM); };
 
 async function loadMonth(y,m){
   $("#ym").textContent = `${y}年 ${m}月`;
   const { data:{ user } } = await supabase.auth.getUser(); if(!user) return;
-  const trackerId = await getDefaultTrackerId(user.id);
+
+  let trackerId = await getDefaultTrackerId(user.id);
+  if (!trackerId) {           // 念のための保険
+    await ensureDefaultTracker();
+    trackerId = await getDefaultTrackerId(user.id);
+    if (!trackerId) return;   // それでも無ければ描画中止
+  }
 
   const { data, error } = await supabase
     .from("marks")
@@ -231,7 +242,6 @@ async function ensureDefaultTracker(){
     await supabase.from("trackers").insert({ user_id: user.id, name: "メイン", color: "#7c9cff", sort_index: 0 });
   }
 }
-
 async function getDefaultTrackerId(uid){
   const { data } = await supabase.from("trackers").select("id").eq("user_id", uid).order("sort_index").limit(1);
   return data?.[0]?.id;
@@ -257,11 +267,11 @@ async function ensurePushSubscription(){
   }
   const info = sub.toJSON();
   const { data:{user} } = await supabase.auth.getUser();
+  if (!user) return;
   await supabase.from("push_subscriptions").upsert({
     user_id: user.id, endpoint: info.endpoint, p256dh: info.keys.p256dh, auth: info.keys.auth
   }, { onConflict: "endpoint" });
 }
-
 function urlBase64ToUint8Array(base64String) {
   const padding = "=".repeat((4 - base64String.length % 4) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
