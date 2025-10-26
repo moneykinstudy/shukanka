@@ -1,0 +1,31 @@
+{
+  "expo": {
+    "name": "Study Rank",
+    "slug": "study-rank",
+    "scheme": "studyrank",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "ios": {
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSUserNotificationUsageDescription": "勉強記録の提出リマインダーを表示します。"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FFFFFF"
+      },
+      "useNextNotificationsApi": true
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "owner": "moneykinstudy",
+    "extra": {
+      "eas": {
+        "projectId": "00000000-0000-0000-0000-000000000000"
+      }
+    }
+  }
+}
