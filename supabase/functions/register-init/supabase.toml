@@ -1,0 +1,2 @@
+[functions.register-init]
+verify_jwt = false

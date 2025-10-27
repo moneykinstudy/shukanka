@@ -1,0 +1,214 @@
+function getFunctionsBase(){ return (function(){ try {
+  var url = (globalThis && (globalThis.supabase && globalThis.supabase.url)) || "";
+  var m = url.match(/^https:\/\/([a-z0-9]{20})\.supabase\.co/i);
+  var ref = m ? m[1] : "dmudbmvvsiofbupptnis";
+  return "https://" + ref + ".functions.supabase.co";
+} catch(_) { return "https://dmudbmvvsiofbupptnis.functions.supabase.co"; } })(); }
+import React, { useEffect, useMemo, useState } from 'react';
+import dayjs from 'dayjs';
+import { supabase } from '../lib/supabase';
+import { getSessionUser } from '../lib/auth';
+import { useNavigation } from "@react-navigation/native";
+import { View, Text, ScrollView, ActivityIndicator, TouchableOpacity } from 'react-native';
+
+type Row = {
+  study_date: string;
+  subject?: string | null;
+  minutes?: number | null;
+  memo?: string | null;
+};
+
+const SUBJECT_ORDER: string[] = ['数学','英語','国語','理科','社会','情報','宿題','その他'];
+
+function parseMemoToSums(memo: string | null | undefined) {
+  const sums: Record<string, number> = {};
+  if (!memo) return { sums, freeNote: '' };
+  const subjGroup = SUBJECT_ORDER.join('|');
+  const reAll = new RegExp(`(?:^|[^一-龥A-Za-z0-9_])(${subjGroup})\\s*[：:]\\s*(\\d{1,4})\\s*分`, 'g');
+  let m: RegExpExecArray | null;
+  while ((m = reAll.exec(memo)) !== null) {
+    const subj = m[1];
+    const min = Number(m[2] || 0);
+    if (min > 0) sums[subj] = (sums[subj] ?? 0) + min;
+  }
+  const cutIdx = memo.search(/(^|\n)\s*内訳\s*[：:]/);
+  const freeSrc = cutIdx >= 0 ? memo.slice(0, cutIdx) : memo;
+  const free = freeSrc
+    .split(/\r?\n/)
+    .map(line => line.replace(/\s+$/,''))
+    .join('\n')
+    .trim();
+  return { sums, freeNote: free };
+}
+
+const Chip = ({ text }: { text: string }) => (
+  <View style={{ alignSelf:'flex-start', backgroundColor:'#D1D8DF',
+                 borderRadius:8, paddingHorizontal:10, paddingVertical:4, marginBottom:8 }}>
+    <Text style={{ color:'#2B3A49', fontWeight:'800' }}>{text}</Text>
+  </View>
+);
+
+type ByDate = Record<string, { sums: Record<string, number>, memo?: string }>;
+
+export default function MyWeek() {
+  const navigation = useNavigation<any>();
+  
+  const handleBack = () => {
+    if ((navigation as any)?.canGoBack && (navigation as any).canGoBack()) {
+      (navigation as any).goBack();
+    } else {
+      try { (navigation as any)?.navigate?.('Tabs', { screen: 'Profile' }); } catch(_){ }
+    }
+  };
+
+  const days = useMemo(() => {
+    const arr: string[] = [];
+    for (let i = 6; i >= 0; i--) arr.push(dayjs().subtract(i, 'day').format('YYYY-MM-DD'));
+    return arr;
+  }, []);
+
+  const [loading, setLoading] = useState(false);
+  const [byDate, setByDate] = useState<ByDate>({});
+  const [memoPick, setMemoPick] = useState<{ date: string, memo: string } | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    (async () => {
+      setLoading(true);
+      try {
+        const me = await getSessionUser();
+        if (!me) { if (isMounted) { setByDate({}); setMemoPick(null); } return; }
+
+        // ★ profiles.id を優先。無ければ最後の手段として me.id を使う。
+        let profileIdForLogs: string | null = null;
+        try {
+          const { data: prof } = await supabase
+            .from('profiles')
+            .select('id')
+            .or(`id.eq.${me.id},auth_user_id.eq.${me.id},email.eq.${me.email ?? ''}`)
+            .limit(1)
+            .maybeSingle<{ id: string }>();
+          if (prof?.id) profileIdForLogs = prof.id;
+        } catch {}
+        if (!profileIdForLogs) profileIdForLogs = me.id;
+
+        const from = days[0];
+        const to   = days[days.length - 1];
+
+        const { data, error } = await supabase
+          .from('study_logs')
+          .select('study_date, subject, minutes, memo')
+          .eq('user_id', profileIdForLogs)   // ← profiles.id で一本化
+          .gte('study_date', from)
+          .lte('study_date', to);
+
+        if (error) {
+          console.error('[MyWeek] logs error', error);
+          if (isMounted) { setByDate({}); setMemoPick(null); }
+          return;
+        }
+
+        const map: ByDate = {};
+        for (const d of days) map[d] = { sums: {}, memo: undefined };
+
+        (data as Row[]).forEach(r => {
+          const d = dayjs(r.study_date).format('YYYY-MM-DD');
+          if (!(d in map)) return;
+
+          const { sums: memoSums, freeNote } = parseMemoToSums(r.memo);
+          const hasBreakdown = Object.keys(memoSums).length > 0;
+
+          if (!hasBreakdown && r.subject && (r.minutes ?? 0) > 0) {
+            const subj = String(r.subject);
+            const min  = Number(r.minutes ?? 0);
+            if (min > 0) map[d].sums[subj] = (map[d].sums[subj] ?? 0) + min;
+          }
+          for (const subj of Object.keys(memoSums)) {
+            map[d].sums[subj] = (map[d].sums[subj] ?? 0) + memoSums[subj];
+          }
+          if (freeNote) {
+            map[d].memo = freeNote;
+          }
+        });
+
+        if (!isMounted) return;
+
+        setByDate(map);
+
+        const candidates = days
+          .map(d => ({ date: d, memo: map[d]?.memo }))
+          .filter(x => x.memo && String(x.memo).trim().length > 0) as { date: string, memo: string }[];
+        if (candidates.length > 0) {
+          const pick = candidates[Math.floor(Math.random() * candidates.length)];
+          setMemoPick(pick);
+        } else {
+          setMemoPick(null);
+        }
+      } catch (e) {
+        console.error('[MyWeek] unexpected', e);
+        if (isMounted) { setByDate({}); setMemoPick(null); }
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    })();
+    return () => { isMounted = false; };
+  }, [days]);
+
+  return (
+    <View style={{ flex:1, backgroundColor:'#F3F7FB' }}>
+      {/* ヘッダー */}
+      <View style={{ height: 60, alignItems:'center', justifyContent:'center', backgroundColor:'#2F80B9' }}>
+        <TouchableOpacity onPress={handleBack}
+          style={{ position:'absolute', left:12, top:12, paddingHorizontal:10, paddingVertical:6, borderRadius:8, backgroundColor:'rgba(255,255,255,0.2)' }}>
+          <Text style={{ color:'#fff', fontWeight:'700' }}>＜ 戻る</Text>
+        </TouchableOpacity>
+        <Text style={{ color:'#fff', fontWeight:'900', fontSize: 21 }}>あなたの今週</Text>
+      </View>
+
+      <ScrollView contentContainerStyle={{ padding:16 }}>
+        {loading ? (
+          <View style={{ paddingTop:24, alignItems:'center' }}>
+            <ActivityIndicator />
+            <Text style={{ marginTop:8, color:'#666' }}>読み込み中…</Text>
+          </View>
+        ) : null}
+
+        {/* 上段：7日分カード */}
+        <View style={{ flexDirection:'row', flexWrap:'wrap', justifyContent:'space-between' }}>
+          {days.map(d => {
+            const sums = byDate[d]?.sums ?? {};
+            const lines = SUBJECT_ORDER
+              .filter(s => (sums[s] ?? 0) > 0)
+              .map(s => `${s}：${sums[s]}分`);
+            return (
+              <View key={d}
+                    style={{ width:'48%', backgroundColor:'#fff', borderWidth:1, borderColor:'#C9D3DF',
+                             borderRadius:12, padding:12, marginBottom:14 }}>
+                <Chip text={dayjs(d).format('M月D日')} />
+                <Text style={{ fontWeight:'800', marginBottom:6, textAlign:'center' }}>やったこと</Text>
+                {lines.length>0 ? lines.map((t,i)=><Text key={i} style={{ lineHeight:22 }}>{t}</Text>)
+                                : <Text style={{ color:'#777' }}>記録なし</Text>}
+              </View>
+            );
+          })}
+        </View>
+
+        {/* 下段：ランダム1日の「頑張ったこと」 */}
+        {memoPick ? (
+          <View style={{ marginTop:6, backgroundColor:'#EAF4FF', borderWidth:1,
+                         borderColor:'#9FC1E6', borderRadius:12, padding:14 }}>
+            <View style={{ flexDirection:'row', alignItems:'center', marginBottom:8 }}>
+              <View style={{ backgroundColor:'#3A86C1', paddingHorizontal:12, paddingVertical:6, borderRadius:10 }}>
+                <Text style={{ color:'#fff', fontWeight:'900' }}>{dayjs(memoPick.date).format('M月D日')}</Text>
+              </View>
+              <Text style={{ marginLeft:12, color:'#2B5C86', fontWeight:'900' }}>頑張ったこと</Text>
+            </View>
+            <Text style={{ fontSize:16, lineHeight:24 }}>{memoPick.memo}</Text>
+          </View>
+        ) : null}
+
+        <View style={{ height:24 }} />
+      </ScrollView>
+    </View>
+  );
+}

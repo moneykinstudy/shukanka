@@ -1,0 +1,9 @@
+{
+  "created_at": "20250930_154610",
+  "note": "Overlay for MyWeek (あなたの今週) screen and related files",
+  "files": [
+    "project/src/screens/MyWeek.tsx",
+    "project/src/app/index.tsx",
+    "project/src/screens/MyProfile.tsx"
+  ]
+}
