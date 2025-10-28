@@ -1,2 +1,3 @@
-self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate',  () => self.clients.claim());
+// Minimal SW just to get controller true
+self.addEventListener('install', (e) => { self.skipWaiting(); });
+self.addEventListener('activate', (e) => { self.clients.claim(); });
