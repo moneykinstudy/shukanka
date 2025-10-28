@@ -8,7 +8,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "build:web": "expo export -p web --output-dir dist",
-    "build": "npm run build:web && npm run postbuild",
+    "build": "expo export -p web --output-dir dist && node scripts/copy-public.js && node scripts/patch-pwa-meta.js && node scripts/patch-index.js",
     "dev": "vite",
     "preview": "vite preview",
     "postbuild": "node scripts/copy-public.js && node scripts/patch-pwa-meta.js && node scripts/patch-index.js"
