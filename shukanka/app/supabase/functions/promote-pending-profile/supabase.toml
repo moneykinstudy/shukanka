@@ -1,0 +1,7 @@
+[functions.promote-pending-profile]
+verify_jwt = true
+
+[functions.promote-pending-profile.cors]
+allowed_origins = ["http://localhost:8081","*"]
+allowed_methods = ["POST","OPTIONS"]
+allowed_headers = ["authorization","x-client-info","apikey","content-type"]

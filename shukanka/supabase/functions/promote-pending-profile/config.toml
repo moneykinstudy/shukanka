@@ -1,0 +1,2 @@
+[functions.promote-pending-profile]
+verify_jwt = true

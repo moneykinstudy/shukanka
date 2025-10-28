@@ -1,0 +1,9 @@
+DATE: 2025-10-03T16:37:53+09:00
+PWD: /Users/teramuratakurou/dev/study-rank-expo
+node: v20.19.5
+npm: 10.8.2
+yarn: 4.10.3
+pnpm: 10.17.1
+supabase: 2.47.2
+git: git version 2.39.5 (Apple Git-154)
+curl: curl 8.7.1 (x86_64-apple-darwin24.0) libcurl/8.7.1 (SecureTransport) LibreSSL/3.3.6 zlib/1.2.12 nghttp2/1.64.0
