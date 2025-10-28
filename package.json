@@ -49,5 +49,6 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": ""
+  "description": "",
+  "packageManager": "npm@10.9.2"
 }
