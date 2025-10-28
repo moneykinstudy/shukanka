@@ -7,11 +7,11 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "build:web": "expo export -p web --output-dir dist && node scripts/patch-index.js",
-    "build": "vite build",
+    "build:web": "expo export -p web --output-dir dist",
+    "build": "npm run build:web && npm run postbuild",
     "dev": "vite",
     "preview": "vite preview",
-    "postbuild": "node app/scripts/copy-public.js && node app/scripts/patch-pwa-meta.js && node app/scripts/patch-index.js"
+    "postbuild": "node scripts/copy-public.js && node scripts/patch-pwa-meta.js && node scripts/patch-index.js"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^2.2.0",
