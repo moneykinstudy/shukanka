@@ -1,0 +1,139 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { View, Text, ScrollView, ActivityIndicator } from 'react-native';
+import dayjs from 'dayjs';
+import { supabase } from '../lib/supabase';
+import FooterNav from '../components/FooterNav';
+
+const SUBJECT_ORDER = ['数学','英語','国語','理科','社会','情報','宿題','その他'];
+
+type Row = { study_date:string; subject?:string|null; minutes?:number|null; memo?:string|null; };
+
+function parseMemoToSums(memo: string | null | undefined){
+  const sums: Record<string, number> = {};
+  if(!memo) return { sums, freeNote: '' };
+  const reAll = new RegExp(`(?:^|[^一-龥A-Za-z0-9_])(${SUBJECT_ORDER.join('|')})\\s*[：:]\\s*(\\d{1,4})\\s*分`,'g');
+  let m:RegExpExecArray|null;
+  while((m = reAll.exec(memo)) !== null){
+    const subj = m[1]; const min = Number(m[2]||0);
+    if(min>0) sums[subj] = (sums[subj] ?? 0) + min;
+  }
+  const free = memo.split(/\r?\n/).filter(line=>!/内訳\s*[:：]/.test(line)).join('\n').trim();
+  return { sums, freeNote: free };
+}
+
+const Chip = ({ text }: { text:string }) => (
+  <View style={{ alignSelf:'flex-start', backgroundColor:'#D1D8DF',
+                 borderRadius:8, paddingHorizontal:10, paddingVertical:4, marginBottom:8 }}>
+    <Text style={{ color:'#2B3A49', fontWeight:'800' }}>{text}</Text>
+  </View>
+);
+
+export default function KnowUserWeek({ route }: any){
+  const p = route?.params || {};
+  const userId: string | undefined = p.user_id;
+  const nickname: string = p.nickname ?? 'ニックネーム';
+
+  const days = useMemo(()=>{
+    const arr:string[]=[]; for(let i=7;i>=1;i--) arr.push(dayjs().subtract(i,'day').format('YYYY-MM-DD')); return arr;
+  },[]);
+
+  const [loading,setLoading]=useState(false);
+  const [byDate,setByDate]=useState<Record<string,{sums:Record<string,number>,memo?:string}>>({});
+  const [memoPick,setMemoPick]=useState<{date:string,memo:string}|null>(null);
+
+  useEffect(()=>{(async()=>{
+    if(!userId) return; setLoading(true);
+    try{
+      const from=days[0], to=days[days.length-1];
+      const {data, error}=await supabase
+        .from('study_logs').select('study_date, subject, minutes, memo')
+        .eq('user_id', userId).gte('study_date', from).lte('study_date', to);
+      if(error){ console.error(error); setByDate({}); setMemoPick(null); return; }
+
+      const map:Record<string,{sums:Record<string,number>,memo?:string}>={};
+      for(const d of days) map[d]={sums:{}};
+
+      (data as Row[]).forEach(r=>{
+        const d=String(r.study_date); if(!(d in map)) return;
+        if(r.subject && (r.minutes??0)>0){
+          const subj=String(r.subject); const min=Number(r.minutes||0);
+          if(min>0) map[d].sums[subj]=(map[d].sums[subj]??0)+min;
+        }
+        const {sums, freeNote}=parseMemoToSums(r.memo);
+        for(const subj of Object.keys(sums)){
+          map[d].sums[subj]=(map[d].sums[subj]??0)+sums[subj];
+        }
+        if(freeNote){
+          const cur=map[d].memo??''; if(freeNote.length>cur.length) map[d].memo=freeNote;
+        }
+      });
+
+      setByDate(map);
+      const candidates=days.map(d=>({d,memo:map[d]?.memo}))
+        .filter(x=>x.memo && String(x.memo).trim().length>0) as {d:string,memo:string}[];
+      if(candidates.length>0){
+        const pick=candidates[Math.floor(Math.random()*candidates.length)];
+        setMemoPick({date:pick.d, memo:pick.memo});
+      }else setMemoPick(null);
+    }finally{ setLoading(false); }
+  })();},[userId]);
+
+  const CARD_W='31%';
+
+  return (
+    <View style={{ flex:1, backgroundColor:'#F3F7FB' }}>
+      {/* ★ ヘッダー：ライバルの連続達成と同デザイン */}
+      <View style={{ backgroundColor:'#2F80B9', paddingTop:18, paddingHorizontal:16, paddingBottom:14 }}>
+        <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}>
+          <View style={{ width:24 }} />
+          <Text style={{ color:'#fff', fontSize:22, fontWeight:'800' }}>{`${nickname}さんの今週`}</Text>
+          <View style={{ minWidth:24, alignItems:'flex-end' }} />
+        </View>
+      </View>
+
+      <ScrollView contentContainerStyle={{ padding:16, paddingBottom:96 }}>
+        {loading ? (
+          <View style={{ paddingTop:24, alignItems:'center' }}>
+            <ActivityIndicator /><Text style={{ marginTop:8, color:'#666' }}>読み込み中…</Text>
+          </View>
+        ) : null}
+
+        {/* 7日分カード */}
+        <View style={{ flexDirection:'row', flexWrap:'wrap', justifyContent:'space-between' }}>
+          {days.map(d=>{
+            const sums=byDate[d]?.sums ?? {};
+            const lines=SUBJECT_ORDER.filter(s=>(sums[s]??0)>0).map(s=>`${s}：${sums[s]}分`);
+            return (
+              <View key={d}
+                style={{ width:CARD_W, backgroundColor:'#fff', borderWidth:1, borderColor:'#C9D3DF',
+                         borderRadius:12, padding:12, marginBottom:14 }}>
+                <Chip text={dayjs(d).format('M月D日')} />
+                <Text style={{ fontWeight:'800', marginBottom:6, textAlign:'center' }}>やったこと</Text>
+                {lines.length>0 ? lines.map((t,i)=><Text key={i} style={{ lineHeight:22 }}>{t}</Text>)
+                                : <Text style={{ color:'#777' }}>記録なし</Text>}
+              </View>
+            );
+          })}
+        </View>
+
+        {/* ランダムメモ */}
+        {memoPick ? (
+          <View style={{ marginTop:6, backgroundColor:'#EAF4FF', borderWidth:1,
+                         borderColor:'#9FC1E6', borderRadius:12, padding:14 }}>
+            <View style={{ flexDirection:'row', alignItems:'center', marginBottom:8 }}>
+              <View style={{ backgroundColor:'#3A86C1', paddingHorizontal:12, paddingVertical:6, borderRadius:10 }}>
+                <Text style={{ color:'#fff', fontWeight:'900' }}>{dayjs(memoPick.date).format('M月D日')}</Text>
+              </View>
+              <Text style={{ marginLeft:12, color:'#2B5C86', fontWeight:'900' }}>頑張ったこと</Text>
+            </View>
+            <Text style={{ fontSize:16, lineHeight:24 }}>{memoPick.memo}</Text>
+          </View>
+        ) : null}
+        <View style={{ height:24 }} />
+      </ScrollView>
+
+      {/* フッター */}
+      <FooterNav active="Rivals" />
+    </View>
+  );
+}

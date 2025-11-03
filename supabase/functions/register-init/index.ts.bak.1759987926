@@ -1,0 +1,45 @@
+const ALLOW_ORIGIN = 'http://localhost:8081';
+function cors(init: ResponseInit = {}): ResponseInit {
+  return {
+    ...init,
+    headers: {
+      'Access-Control-Allow-Origin': ALLOW_ORIGIN,
+      'Access-Control-Allow-Methods': 'POST,OPTIONS',
+      'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+      ...(init.headers || {})
+    }
+  };
+}
+
+export default async (req: Request): Promise<Response> => {
+  // CORS preflight
+  if (req.method === 'OPTIONS') return new Response(null, cors({ status: 204 }));
+
+  const auth = req.headers.get('authorization') || '';
+  const apikey = req.headers.get('apikey') || '';
+  let body: any = {};
+  try { body = await req.json(); } catch { /* ignore */ }
+
+  // 入力を正規化して簡易検証
+  const email = body?.email ?? body?.contact_email ?? null;
+  const rawCode = body?.code ?? body?.short_code ?? body?.shortCode ?? body?.token ?? body?.otp ?? null;
+  const code = rawCode == null ? null : String(rawCode).trim();
+
+  const diag = {
+    seen: {
+      authorization: Boolean(auth),
+      apikey: Boolean(apikey),
+      origin: req.headers.get('origin') || null,
+      method: req.method,
+    },
+    input: { email, codeLength: code?.length ?? null, codeSample: code ? code.replace(/\d/g,'#') : null },
+    note: 'verify_jwt=false を設定していれば Authorization なしでも 200 を返します'
+  };
+
+  // バリデーション（6桁コード想定。要件次第で調整可）
+  if (!email) return new Response(JSON.stringify({ ok:false, error:'email is required', diag }), cors({ status: 400 }));
+  if (!code || !/^\d{6}$/.test(code)) return new Response(JSON.stringify({ ok:false, error:'code must be 6 digits', diag }), cors({ status: 400 }));
+
+  // ここでは DB 変更は行わず、常に成功扱い（イデンポテント）
+  return new Response(JSON.stringify({ ok:true, status:'accepted', email, diag }), cors({ status: 200 }));
+};

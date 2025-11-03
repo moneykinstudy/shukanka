@@ -1,0 +1,297 @@
+<!doctype html><meta charset="utf-8">
+<title>○×カレンダー</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="manifest" href="/manifest.json">
+<style>
+  :root{--bg:#0f1115;--fg:#e8ecf1;--muted:#9aa3af;--acc:#7c9cff;--card:#141824;--ok:#14b8a6;--ng:#f43f5e}
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 ui-sans-serif,system-ui}
+  header{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #1f2633}
+  .brand{font-weight:700} .btn{background:#1f2633;border:1px solid #2a3346;color:var(--fg);padding:8px 12px;border-radius:10px;cursor:pointer}
+  .btn.primary{background:var(--acc);border-color:var(--acc);color:#0b1020}
+  .row{display:flex;gap:12px;align-items:center} input[type=email]{padding:8px;border-radius:8px;border:1px solid #2a3346;background:#0c1018;color:var(--fg)}
+  main{padding:16px;max-width:900px;margin:0 auto}
+  .panel{background:var(--card);border:1px solid #1f2633;border-radius:14px;padding:14px;margin-top:12px}
+  .grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-top:10px}
+  .cell{aspect-ratio:1/1;border:1px solid #1f2633;border-radius:10px;display:flex;align-items:center;justify-content:center;cursor:pointer}
+  .cell.muted{color:var(--muted)} .cell.ok{outline:2px solid var(--ok)} .cell.ng{outline:2px solid var(--ng)}
+  .legend{display:flex;gap:8px;color:var(--muted);font-size:12px}
+  .pill{display:inline-block;background:#1f2633;border:1px solid #2a3346;border-radius:999px;padding:4px 10px;color:var(--muted)}
+  .flex{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+</style>
+
+<header>
+  <div class="brand">○×カレンダー</div>
+  <div id="authArea" class="row">
+    <input id="email" type="email" placeholder="you@example.com">
+    <button id="sendLink" class="btn">ログインリンク送信</button>
+  </div>
+  <div id="userArea" class="row" style="display:none">
+    <span id="userEmail" class="pill"></span>
+    <button id="logout" class="btn">ログアウト</button>
+  </div>
+</header>
+
+<main>
+  <div id="status" class="pill">準備中…</div>
+
+  <div class="panel">
+    <div class="flex" style="justify-content:space-between">
+      <div class="row">
+        <button id="prev" class="btn">←</button>
+        <div id="ym" class="pill"></div>
+        <button id="next" class="btn">→</button>
+      </div>
+      <div class="legend">
+        <span>タップ：空→○→×→空</span>
+        <span class="pill">連続記録：<b id="streakDays">0</b>日</span>
+      </div>
+    </div>
+    <div class="grid" id="grid"></div>
+  </div>
+
+  <div class="panel">
+    <div class="row">
+      <label class="row" style="gap:6px">
+        <input id="remindToggle" type="checkbox" checked>
+        未記録の日に 21:00 / 22:00 / 23:00 に通知
+      </label>
+      <button id="savePrefs" class="btn primary">設定を保存</button>
+    </div>
+    <div style="margin-top:8px;color:var(--muted);font-size:13px">
+      ※初回ログイン後、通知を「許可」すると端末が購読されます。
+    </div>
+  </div>
+</main>
+
+<script type="module">
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const SUPABASE_URL = "https://dmudbmvvsiofbupptnis.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtdWRibXZ2c2lvZmJ1cHB0bmlzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTgxMTcyMzEsImV4cCI6MjA3MzY5MzIzMX0.ima2MhGyQ2i_X38u_BrxehHRweKVoFr5rTza3yzTUbo";
+const VAPID_PUBLIC_KEY = "BNHJJ8g4cJ4f9tCx56TT3h7BAl4lvgEIrAgsCrvZtQGgReHgHEkmPkwfgXH83Pj3YkHht-GmF08nc5vv0TjDSqI";
+
+// supabase-js のセッションを確実に復元 & 自動更新
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+});
+
+// ✅ カレンダー状態変数は「onAuthStateChange を設定する前」に定義しておく
+let current = new Date(); current.setDate(1);
+let currentY = current.getFullYear();
+let currentM = current.getMonth() + 1;
+
+const $ = (s)=>document.querySelector(s);
+const status = (t)=>$("#status").textContent=t;
+
+// ============ 認証：初期化 / 監視 / 画面切替 ============
+async function initAuth() {
+  // マジックリンクで戻ってきた直後の URL をきれいに
+  try {
+    if (location.search || location.hash) {
+      const url = new URL(location.href);
+      if (url.searchParams.has('code') || url.hash.includes('access_token')) {
+        history.replaceState(null, '', location.origin + location.pathname);
+      }
+    }
+  } catch {}
+
+  const { data: { session }, error } = await supabase.auth.getSession();
+  if (error) console.error(error);
+  if (session?.user) await onSignedIn(session); else onSignedOut();
+}
+
+supabase.auth.onAuthStateChange(async (_event, session) => {
+  if (session?.user) await onSignedIn(session); else onSignedOut();
+});
+
+async function onSignedIn(session){
+  // 念のための保険（変数が未初期化ならここで整える）
+  if (!currentY || !currentM) {
+    const d = new Date(); d.setDate(1);
+    currentY = d.getFullYear(); currentM = d.getMonth() + 1;
+  }
+  $("#authArea").style.display="none";
+  $("#userArea").style.display="flex";
+  $("#userEmail").textContent = session.user.email || "ログイン中";
+  status("ログイン済み。データ読み込み中…");
+
+  // データ描画に関係ない処理は await しない（並行で進める）
+  ensurePushSubscription().catch(console.warn);
+
+  await ensureDefaultTracker();
+  await loadMonth(currentY, currentM);
+  await loadMyStreak();
+  status("準備OK");
+}
+
+function onSignedOut(){
+  $("#authArea").style.display="flex";
+  $("#userArea").style.display="none";
+  status("ログインしてください");
+}
+
+// ============ マジックリンク送信（60秒クールダウン） ============
+async function sendMagicLink(email) {
+  const btn = $("#sendLink");
+  btn.disabled = true;
+  let left = 60;
+  btn.textContent = `再送 (${left}s)`;
+  const timer = setInterval(() => {
+    left -= 1;
+    btn.textContent = left > 0 ? `再送 (${left}s)` : 'ログインリンク送信';
+    if (left <= 0) { clearInterval(timer); btn.disabled = false; }
+  }, 1000);
+
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: location.origin }
+  });
+  if (error) {
+    console.error(error);
+    status(error.message === 'Email rate limit exceeded'
+      ? '送信が多すぎます。1〜5分待って再試行してください。'
+      : `送信エラー: ${error.message}`);
+  } else {
+    status('ログインリンクを送信しました。メールのリンクを開いて戻ってください。');
+  }
+}
+
+// ボタン/ログアウト
+$("#sendLink").onclick = async () => {
+  const email = $("#email").value.trim();
+  if (!email) return alert("メールを入力してください");
+  await sendMagicLink(email);
+};
+$("#logout").onclick = async () => {
+  await supabase.auth.signOut();
+  onSignedOut();
+};
+
+// ============ カレンダー描画＆○×保存 ============
+$("#prev").onclick = ()=>{ const d=new Date(currentY,currentM-2,1); currentY=d.getFullYear(); currentM=d.getMonth()+1; loadMonth(currentY,currentM); };
+$("#next").onclick = ()=>{ const d=new Date(currentY,currentM,1);   currentY=d.getFullYear(); currentM=d.getMonth()+1; loadMonth(currentY,currentM); };
+
+async function loadMonth(y,m){
+  $("#ym").textContent = `${y}年 ${m}月`;
+  const { data:{ user } } = await supabase.auth.getUser(); if(!user) return;
+
+  let trackerId = await getDefaultTrackerId(user.id);
+  if (!trackerId) {           // 念のための保険
+    await ensureDefaultTracker();
+    trackerId = await getDefaultTrackerId(user.id);
+    if (!trackerId) return;   // それでも無ければ描画中止
+  }
+
+  const { data, error } = await supabase
+    .from("marks")
+    .select("d, mark")
+    .eq("user_id", user.id).eq("y", y).eq("m", m).eq("tracker_id", trackerId);
+  if (error) { console.error(error); return; }
+  const map = new Map(data?.map(r=>[r.d, r.mark]) || []);
+
+  const grid = $("#grid"); grid.innerHTML = "";
+  const first = new Date(y, m-1, 1);
+  const startW = (first.getDay()+6)%7; // 月曜起点
+  const days = new Date(y, m, 0).getDate();
+
+  for(let i=0;i<startW;i++){ const div=document.createElement("div"); div.className="cell muted"; grid.appendChild(div); }
+  for(let d=1; d<=days; d++){
+    const div = document.createElement("div"); div.className="cell";
+    div.dataset.day = String(d);
+    const mark = map.get(d); div.textContent = mark || d;
+    if (mark==='○') div.classList.add("ok");
+    if (mark==='×') div.classList.add("ng");
+    div.onclick = ()=>toggleMark(y,m,d,trackerId,div);
+    grid.appendChild(div);
+  }
+}
+
+async function toggleMark(y,m,d,trackerId,cell){
+  const { data:{ user } } = await supabase.auth.getUser(); if(!user) return;
+  const now = cell.textContent;
+  let next = null;
+  if (now === String(d)) next = '○';
+  else if (now === '○') next = '×';
+  else next = null;
+
+  if (next){
+    const { error } = await supabase.from("marks").upsert({
+      user_id: user.id, y, m, d, tracker_id: trackerId, mark: next, updated_at: new Date().toISOString()
+    });
+    if (error) return alert(error.message);
+  } else {
+    const { error } = await supabase.from("marks").delete()
+      .eq("user_id", user.id).eq("y", y).eq("m", m).eq("d", d).eq("tracker_id", trackerId);
+    if (error) return alert(error.message);
+  }
+  await loadMonth(y,m);
+  await loadMyStreak();
+}
+
+// ============ 連続記録日数 ============
+async function loadMyStreak(){
+  const { data, error } = await supabase.from("user_stats").select("streak_days").single();
+  if (!error && data) $("#streakDays").textContent = data.streak_days;
+}
+
+// ============ デフォルトトラッカー作成 ============
+async function ensureDefaultTracker(){
+  const { data:{ user } } = await supabase.auth.getUser(); if(!user) return;
+  const { data } = await supabase.from("trackers").select("id").eq("user_id", user.id).order("sort_index").limit(1);
+  if (!data || data.length===0){
+    await supabase.from("trackers").insert({ user_id: user.id, name: "メイン", color: "#7c9cff", sort_index: 0 });
+  }
+}
+async function getDefaultTrackerId(uid){
+  const { data } = await supabase.from("trackers").select("id").eq("user_id", uid).order("sort_index").limit(1);
+  return data?.[0]?.id;
+}
+
+// ============ Web Push 購読 ============
+async function ensurePushSubscription(){
+  if (!("serviceWorker" in navigator)) return;
+  const reg = await navigator.serviceWorker.register("/service-worker.js");
+  await navigator.serviceWorker.ready;
+
+  if (Notification.permission !== "granted"){
+    const res = await Notification.requestPermission();
+    if (res !== "granted") return;
+  }
+
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub){
+    sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+    });
+  }
+  const info = sub.toJSON();
+  const { data:{user} } = await supabase.auth.getUser();
+  if (!user) return;
+  await supabase.from("push_subscriptions").upsert({
+    user_id: user.id, endpoint: info.endpoint, p256dh: info.keys.p256dh, auth: info.keys.auth
+  }, { onConflict: "endpoint" });
+}
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = atob(base64); const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
+  return outputArray;
+}
+
+// ============ リマインド設定保存 ============
+$("#savePrefs").onclick = async () => {
+  const { data:{user} } = await supabase.auth.getUser(); if(!user) return alert("先にログインしてください");
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Tokyo";
+  const enabled = $("#remindToggle").checked;
+  const { error } = await supabase.from("reminder_prefs").upsert({
+    user_id: user.id, enabled, timezone: tz, times: ['21:00','22:00','23:00']
+  });
+  if (error) return alert(error.message);
+  status(`保存しました（${enabled?'ON':'OFF'} / ${tz}）`);
+};
+
+// 起動時に認証初期化
+initAuth();
+</script>
