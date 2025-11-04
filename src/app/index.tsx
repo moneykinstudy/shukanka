@@ -14,7 +14,7 @@ import RankIntro from '../screens/RankIntro';
 import FirstRank from '../screens/FirstRank';
 
 // ★ OnboardOverlay をアプリ共通ルートで常時マウント
-import { OnboardOverlay } from '../components/OnboardOverlay';
+import OnboardOverlay from '../components/OnboardOverlay';
 
 const Tab = createBottomTabNavigator();
 const Stack: any = createNativeStackNavigator();

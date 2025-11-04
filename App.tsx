@@ -4,7 +4,7 @@ import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-c
 import AppRoot from './src/app/index';
 
 // ← 既存ファイルの場所に合わせてパスを調整してください
-import { OnboardOverlay } from './src/components/OnboardOverlay';
+import OnboardOverlay from './src/components/OnboardOverlay';
 
 // ---- Web限定：緊急フォールバック（OnboardOverlay が動かないときに DOM で出す）----
 function useEmergencyOnboardFallback() {
