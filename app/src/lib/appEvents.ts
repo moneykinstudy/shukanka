@@ -1,7 +1,6 @@
-// src/lib/appEvents.ts
+// app/src/lib/appEvents.ts
 
 // ==== 自前の超シンプル EventEmitter 実装 ====
-// Node の "events" は一切使わない ※ここがポイント
 
 type Listener = (...args: any[]) => void;
 
@@ -22,8 +21,8 @@ class SimpleEventEmitter {
   }
 
   addListener(event: string, listener: Listener) {
-    // React Native っぽい addListener もサポート
     this.on(event, listener);
+    // KnowUserWeek.tsx が sub.remove() を呼べるようにする
     return {
       remove: () => {
         this.off(event, listener);
